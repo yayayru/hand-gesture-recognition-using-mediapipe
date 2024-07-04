@@ -41,7 +41,7 @@ def get_args():
 
 
 def main():
-    # Анализ аргументов #################################################################
+    # 引数解析 #################################################################
     args = get_args()
 
     cap_device = args.device
@@ -54,12 +54,12 @@ def main():
 
     use_brect = True
 
-    # Камера готова ###############################################################
+    # カメラ準備 ###############################################################
     cap = cv.VideoCapture(cap_device)
     cap.set(cv.CAP_PROP_FRAME_WIDTH, cap_width)
     cap.set(cv.CAP_PROP_FRAME_HEIGHT, cap_height)
 
-    # Модель дороги #############################################################
+    # モデルロード #############################################################
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
         static_image_mode=use_static_image_mode,
@@ -72,14 +72,15 @@ def main():
 
     point_history_classifier = PointHistoryClassifier()
 
-    # Загрузка этикетки ###########################################################
-
-    with open('model/keypoint_classifier/keypoint_classifier_label.csv',
-              encoding='utf-8-sig') as f:
-        keypoint_classifier_labels = csv.reader(f)
-        keypoint_classifier_labels = [
-            row[0] for row in keypoint_classifier_labels
+    # ラベル読み込み ###########################################################
+    with open(
+            'model/point_history_classifier/point_history_classifier_label.csv',
+            encoding='utf-8-sig') as f:
+        point_history_classifier_labels = csv.reader(f)
+        point_history_classifier_labels = [
+            row[0] for row in point_history_classifier_labels
         ]
+    
     with open('model/keypoint_classifier/keypoint_classifier_label.csv',
               encoding='utf-8-sig') as f:
         keypoint_classifier_labels = csv.reader(f)
@@ -94,14 +95,14 @@ def main():
             row[0] for row in point_history_classifier_labels
         ]
 
-    # Модуль измерения кадров в секунду ########################################################
+    # FPS計測モジュール ########################################################
     cvFpsCalc = CvFpsCalc(buffer_len=10)
 
-    # История координата #################################################################
+    # 座標履歴 #################################################################
     history_length = 16
     point_history = deque(maxlen=history_length)
 
-    # История жестов пальцами ################################################
+    # フィンガージェスチャー履歴 ################################################
     finger_gesture_history = deque(maxlen=history_length)
 
     #  ########################################################################
@@ -110,20 +111,20 @@ def main():
     while True:
         fps = cvFpsCalc.get()
 
-        # Обработка клавиш (ESC: Выход) #################################################
+        # キー処理(ESC：終了) #################################################
         key = cv.waitKey(10)
         if key == 27:  # ESC
             break
         number, mode = select_mode(key, mode)
 
-        # Захват камеры #####################################################
+        # カメラキャプチャ #####################################################
         ret, image = cap.read()
         if not ret:
             break
         image = cv.flip(image, 1)  # ミラー表示
         debug_image = copy.deepcopy(image)
 
-        # Реализация обнаружения #############################################################
+        # 検出実施 #############################################################
         image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
 
         image.flags.writeable = False
@@ -134,41 +135,40 @@ def main():
         if results.multi_hand_landmarks is not None:
             for hand_landmarks, handedness in zip(results.multi_hand_landmarks,
                                                   results.multi_handedness):
-                # Расчет описанного прямоугольника
+                # 外接矩形の計算
                 brect = calc_bounding_rect(debug_image, hand_landmarks)
-                # Расчет ориентира
+                # ランドマークの計算
                 landmark_list = calc_landmark_list(debug_image, hand_landmarks)
 
-                # Преобразование в относительные координаты/нормализованные координаты
+                # 相対座標・正規化座標への変換
                 pre_processed_landmark_list = pre_process_landmark(
                     landmark_list)
                 pre_processed_point_history_list = pre_process_point_history(
                     debug_image, point_history)
-                # Хранение обучающих данных
+                # 学習データ保存
                 logging_csv(number, mode, pre_processed_landmark_list,
                             pre_processed_point_history_list)
 
-                # Классификация знаков руки
+                # ハンドサイン分類
                 hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
-                point_history.append(landmark_list[8]) 
-                # if hand_sign_id == 2:  # Указательный знак
-                #     point_history.append(landmark_list[8])  # Координаты указательного пальца
-                # else:
-                #     point_history.append([0, 0])
+                if hand_sign_id == 2:  # 指差しサイン
+                    point_history.append(landmark_list[8])  # 人差指座標
+                else:
+                    point_history.append([0, 0])
 
-                # Классификация жестов пальцев
+                # フィンガージェスチャー分類
                 finger_gesture_id = 0
                 point_history_len = len(pre_processed_point_history_list)
                 if point_history_len == (history_length * 2):
                     finger_gesture_id = point_history_classifier(
                         pre_processed_point_history_list)
 
-                # Вычислите наиболее часто обнаруживаемый идентификатор жеста среди самых последних обнаружений
+                # 直近検出の中で最多のジェスチャーIDを算出
                 finger_gesture_history.append(finger_gesture_id)
                 most_common_fg_id = Counter(
                     finger_gesture_history).most_common()
 
-                # Рисунок
+                # 描画
                 # debug_image = draw_bounding_rect(use_brect, debug_image, brect)
                 debug_image = draw_landmarks(debug_image, landmark_list)
                 debug_image = draw_info_text(
@@ -184,7 +184,7 @@ def main():
         debug_image = draw_point_history(debug_image, point_history)
         debug_image = draw_info(debug_image, fps, mode, number)
 
-        # Отражение экрана #############################################################
+        # 画面反映 #############################################################
         cv.imshow('Hand Gesture Recognition', debug_image)
 
     cap.release()
@@ -227,7 +227,7 @@ def calc_landmark_list(image, landmarks):
 
     landmark_point = []
 
-    # Ключевой момент
+    # キーポイント
     for _, landmark in enumerate(landmarks.landmark):
         landmark_x = min(int(landmark.x * image_width), image_width - 1)
         landmark_y = min(int(landmark.y * image_height), image_height - 1)
@@ -241,7 +241,7 @@ def calc_landmark_list(image, landmarks):
 def pre_process_landmark(landmark_list):
     temp_landmark_list = copy.deepcopy(landmark_list)
 
-    # Преобразование в относительные координаты
+    # 相対座標に変換
     base_x, base_y = 0, 0
     for index, landmark_point in enumerate(temp_landmark_list):
         if index == 0:
@@ -250,11 +250,11 @@ def pre_process_landmark(landmark_list):
         temp_landmark_list[index][0] = temp_landmark_list[index][0] - base_x
         temp_landmark_list[index][1] = temp_landmark_list[index][1] - base_y
 
-    # Преобразовать в 1D-список
+    # 1次元リストに変換
     temp_landmark_list = list(
         itertools.chain.from_iterable(temp_landmark_list))
 
-    # Нормализация
+    # 正規化
     max_value = max(list(map(abs, temp_landmark_list)))
 
     def normalize_(n):
@@ -270,7 +270,7 @@ def pre_process_point_history(image, point_history):
 
     temp_point_history = copy.deepcopy(point_history)
 
-    # Преобразование в относительные координаты
+    # 相対座標に変換
     base_x, base_y = 0, 0
     for index, point in enumerate(temp_point_history):
         if index == 0:
@@ -281,7 +281,7 @@ def pre_process_point_history(image, point_history):
         temp_point_history[index][1] = (temp_point_history[index][1] -
                                         base_y) / image_height
 
-    # Преобразовать в 1D-список
+    # 1次元リストに変換
     temp_point_history = list(
         itertools.chain.from_iterable(temp_point_history))
 
@@ -305,9 +305,9 @@ def logging_csv(number, mode, landmark_list, point_history_list):
 
 
 def draw_landmarks(image, landmark_point):
-    # Линия связи
+    # 接続線
     if len(landmark_point) > 0:
-        # Большой палец
+        # 親指
         cv.line(image, tuple(landmark_point[2]), tuple(landmark_point[3]),
                 (0, 0, 0), 1)
         cv.line(image, tuple(landmark_point[2]), tuple(landmark_point[3]),
@@ -317,7 +317,7 @@ def draw_landmarks(image, landmark_point):
         cv.line(image, tuple(landmark_point[3]), tuple(landmark_point[4]),
                 (255, 255, 255), 2)
 
-        # Указательный палец
+        # 人差指
         cv.line(image, tuple(landmark_point[5]), tuple(landmark_point[6]),
                 (0, 0, 0), 1)
         cv.line(image, tuple(landmark_point[5]), tuple(landmark_point[6]),
@@ -331,7 +331,7 @@ def draw_landmarks(image, landmark_point):
         cv.line(image, tuple(landmark_point[7]), tuple(landmark_point[8]),
                 (255, 255, 255), 2)
 
-        # Средний палец
+        # 中指
         cv.line(image, tuple(landmark_point[9]), tuple(landmark_point[10]),
                 (0, 0, 0), 1)
         cv.line(image, tuple(landmark_point[9]), tuple(landmark_point[10]),
@@ -345,7 +345,7 @@ def draw_landmarks(image, landmark_point):
         cv.line(image, tuple(landmark_point[11]), tuple(landmark_point[12]),
                 (255, 255, 255), 2)
 
-        # Безымянный палец
+        # 薬指
         cv.line(image, tuple(landmark_point[13]), tuple(landmark_point[14]),
                 (0, 0, 0), 1)
         cv.line(image, tuple(landmark_point[13]), tuple(landmark_point[14]),
@@ -359,7 +359,7 @@ def draw_landmarks(image, landmark_point):
         cv.line(image, tuple(landmark_point[15]), tuple(landmark_point[16]),
                 (255, 255, 255), 2)
 
-        # Мизинец
+        # 小指
         cv.line(image, tuple(landmark_point[17]), tuple(landmark_point[18]),
                 (0, 0, 0), 1)
         cv.line(image, tuple(landmark_point[17]), tuple(landmark_point[18]),
@@ -373,7 +373,7 @@ def draw_landmarks(image, landmark_point):
         cv.line(image, tuple(landmark_point[19]), tuple(landmark_point[20]),
                 (255, 255, 255), 2)
 
-        # Ладонь руки
+        # 手の平
         cv.line(image, tuple(landmark_point[0]), tuple(landmark_point[1]),
                 (0, 0, 0), 1)
         cv.line(image, tuple(landmark_point[0]), tuple(landmark_point[1]),
@@ -403,53 +403,139 @@ def draw_landmarks(image, landmark_point):
         cv.line(image, tuple(landmark_point[17]), tuple(landmark_point[0]),
                 (255, 255, 255), 2)
 
-
+    # キーポイント
+    # for index, landmark in enumerate(landmark_point):
+    #     if index == 0:  # 手首1
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 1:  # 手首2
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 2:  # 親指：付け根
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 3:  # 親指：第1関節
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 4:  # 親指：指先
+    #         cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
+    #     if index == 5:  # 人差指：付け根
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 6:  # 人差指：第2関節
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 7:  # 人差指：第1関節
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 8:  # 人差指：指先
+    #         cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
+    #     if index == 9:  # 中指：付け根
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 10:  # 中指：第2関節
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 11:  # 中指：第1関節
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 12:  # 中指：指先
+    #         cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
+    #     if index == 13:  # 薬指：付け根
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 14:  # 薬指：第2関節
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 15:  # 薬指：第1関節
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 16:  # 薬指：指先
+    #         cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
+    #     if index == 17:  # 小指：付け根
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 18:  # 小指：第2関節
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 19:  # 小指：第1関節
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
+    #     if index == 20:  # 小指：指先
+    #         cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
+    #                   -1)
+    #         cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
+    # キーポイント
     for index, landmark in enumerate(landmark_point):
         color = (255, 255, 255)  # Default white color for the filled circle
 
         # Assign colors based on the index
-        if index == 0:  # запястье 1
+        if index == 0:  # 手首1
             color = (255, 0, 0)  # Red
-        elif index == 1:  # запястье 2
+        elif index == 1:  # 手首2
             color = (0, 255, 0)  # Green
-        elif index == 2:  # Большой палец: основание
+        elif index == 2:  # 親指：付け根
             color = (0, 0, 255)  # Blue
-        elif index == 3:  # Большой палец: 1-й сустав
+        elif index == 3:  # 親指：第1関節
             color = (255, 255, 0)  # Yellow
-        elif index == 4:  # Большой палец: кончик пальца
+        elif index == 4:  # 親指：指先
             color = (0, 255, 255)  # Cyan
-        elif index == 5:  # Указательный палец: основание
+        elif index == 5:  # 人差指：付け根
             color = (255, 0, 255)  # Magenta
-        elif index == 6:  # Указательный палец: 2-й сустав
+        elif index == 6:  # 人差指：第2関節
             color = (255, 165, 0)  # Orange
-        elif index == 7:  # Указательный палец: 1-й сустав
+        elif index == 7:  # 人差指：第1関節
             color = (128, 0, 128)  # Purple
-        elif index == 8:  # Указательный палец: кончик пальца
+        elif index == 8:  # 人差指：指先
             color = (255, 192, 203)  # Pink
             border_color = (128, 128, 128)  # Gray
-        elif index == 9:  # Средний палец: основание
+        elif index == 9:  # 中指：付け根
             color = (128, 128, 128)  # Gray
-        elif index == 10:  # Средний палец: 2-й сустав
+        elif index == 10:  # 中指：第2関節
             color = (0, 128, 0)  # Dark Green
-        elif index == 11:  # Средний палец: 1-й сустав
+        elif index == 11:  # 中指：第1関節
             color = (0, 0, 128)  # Navy
-        elif index == 12:  # Средний палец: кончик пальца
+        elif index == 12:  # 中指：指先
             color = (128, 0, 0)  # Maroon
-        elif index == 13:  # Безымянный палец: основание
+        elif index == 13:  # 薬指：付け根
             color = (128, 128, 0)  # Olive
-        elif index == 14:  # Безымянный палец: 2-й сустав.
+        elif index == 14:  # 薬指：第2関節
             color = (0, 128, 128)  # Teal
-        elif index == 15:  # Безымянный палец: 1-й сустав.
+        elif index == 15:  # 薬指：第1関節
             color = (0, 255, 127)  # Spring Green
-        elif index == 16:  # Безымянный палец: кончик пальца
+        elif index == 16:  # 薬指：指先
             color = (255, 20, 147)  # Deep Pink
-        elif index == 17:  # Мизинец: основание
+        elif index == 17:  # 小指：付け根
             color = (255, 69, 0)  # Red-Orange
-        elif index == 18:  # Мизинец: 2-й сустав
+        elif index == 18:  # 小指：第2関節
             color = (70, 130, 180)  # Steel Blue
-        elif index == 19:  # Мизинец: 1-й сустав
+        elif index == 19:  # 小指：第1関節
             color = (138, 43, 226)  # Blue Violet
-        elif index == 20:  # Мизинец: кончик пальца
+        elif index == 20:  # 小指：指先
             color = (210, 105, 30)  # Chocolate
 
         radius = 5 if index not in [4, 8, 12, 16, 20] else 8
@@ -462,7 +548,7 @@ def draw_landmarks(image, landmark_point):
 
 def draw_bounding_rect(use_brect, image, brect):
     if use_brect:
-        # Описанный прямоугольник
+        # 外接矩形
         cv.rectangle(image, (brect[0], brect[1]), (brect[2], brect[3]),
                      (0, 0, 0), 1)
 
@@ -470,50 +556,45 @@ def draw_bounding_rect(use_brect, image, brect):
 
 
 def draw_info_text(image, brect, handedness, hand_hs_text,
-                   finger_gesture_text, hand_or_text="Ладонь от себя",
-                   hand_place_text="НЖП"
-                   ): #TODO Заменить "or" на ""
+                   finger_gesture_text, hand_or_text="or"): #TODO Заменить "or" на ""
     # cv.rectangle(image, (brect[0], brect[1]), (brect[2], brect[1] - 22),
     #              (0, 0, 0), -1)
 
     if handedness.classification[0].index:
-        info_text = "Правая рука"
+        info_text = "Правая рука:"
     else:
-        info_text = "Левая рука"
+        info_text = "Левая рука:"
 
     # info_text = handedness.classification[0].label[0:]
     if hand_hs_text != "":
         handedness.classification[0]
         # info_text = info_text + ':' + hand_hs_text
 
-    cv.putText(image, info_text, (brect[0] + 5, brect[1] - 71),
+    cv.putText(image, info_text, (brect[0] + 5, brect[1] - 46),
             #    FONT_FACE, 0.6, (255, 255, 255), 1)
-               FONT_FACE, 0.6, (0, 128, 255), 1, cv.LINE_AA)
-    
-    cv.putText(image, "Локализация: "+ hand_place_text, (brect[0] + 5, brect[1] - 46),
-            #    FONT_FACE, 0.6, (255, 255, 255), 1)
-            #    FONT_FACE, 0.6, (255, 255, 255), 1, cv.LINE_AA)
-               FONT_FACE, 0.6, (0, 0, 0), 1, cv.LINE_AA)
+               FONT_FACE, 0.6, (255, 255, 255), 1, cv.LINE_AA)
     
     cv.putText(image, "Ориентация: "+ hand_or_text, (brect[0] + 5, brect[1] - 25),
             #    FONT_FACE, 0.6, (255, 255, 255), 1)
-            #    FONT_FACE, 0.6, (255, 255, 255), 1, cv.LINE_AA)
-               FONT_FACE, 0.6, (0, 0, 0), 1, cv.LINE_AA)
+               FONT_FACE, 0.6, (255, 255, 255), 1, cv.LINE_AA)
     
     cv.putText(image, "Конфигурация: "+ hand_hs_text, (brect[0] + 5, brect[1] - 4),
             #    FONT_FACE, 0.6, (255, 255, 255), 1)
-            #    FONT_FACE, 0.6, (255, 255, 255), 1, cv.LINE_AA)
-               FONT_FACE, 0.6, (0, 0, 0), 1, cv.LINE_AA)
+               FONT_FACE, 0.6, (255, 255, 255), 1, cv.LINE_AA)
 
 
 
     if finger_gesture_text != "":
-        cv.putText(image, "Движение: " + finger_gesture_text, (10, 60),
-                #    FONT_FACE, 0.6, (255, 255, 255), 1, cv.LINE_AA)
-                   FONT_FACE, 0.6, (0, 0, 0), 1, cv.LINE_AA)
-        # cv.putText(image, "Движение: " + finger_gesture_text, (10, 95),
-        #            FONT_FACE, 1.0, (255, 255, 255), 2,
+        # cv.putText(image, "Finger Gesture:" + finger_gesture_text, (10, 60),
+        #            cv.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 4, cv.LINE_AA)
+        # cv.putText(image, "Finger Gesture:" + finger_gesture_text, (10, 60),
+        #            cv.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2,
         #            cv.LINE_AA)
+        cv.putText(image, "Движение: " + finger_gesture_text, (10, 60),
+                   FONT_FACE, 1.0, (0, 0, 0), 4, cv.LINE_AA)
+        cv.putText(image, "Движение: " + finger_gesture_text, (10, 95),
+                   FONT_FACE, 1.0, (255, 255, 255), 2,
+                   cv.LINE_AA)
     return image
 
 
@@ -526,17 +607,15 @@ def draw_point_history(image, point_history):
 
 
 def draw_info(image, fps, mode, number):
-    # cv.putText(image, "Кадры в секунду: " + str(fps), (10, 30), FONT_FACE,
-    #            0.6, (0, 0, 0), 1, cv.LINE_AA)
     cv.putText(image, "Кадры в секунду: " + str(fps), (10, 30), FONT_FACE,
-            #    0.6, (255, 255, 255), 1, cv.LINE_AA)
-               0.6, (0, 0, 0), 1, cv.LINE_AA)
+               1.0, (0, 0, 0), 4, cv.LINE_AA)
+    cv.putText(image, "Кадры в секунду: " + str(fps), (10, 30), FONT_FACE,
+               1.0, (255, 255, 255), 2, cv.LINE_AA)
 
     mode_string = ['Logging Key Point', 'Logging Point History']
     if 1 <= mode <= 2:
         cv.putText(image, "MODE:" + mode_string[mode - 1], (10, 90),
-                #    FONT_FACE, 0.6, (255, 255, 255), 1,
-                   FONT_FACE, 0.6, (0, 0, 0), 1,
+                   FONT_FACE, 0.6, (255, 255, 255), 1,
                    cv.LINE_AA)
         if 0 <= number <= 9:
             cv.putText(image, "NUM:" + str(number), (10, 110),
@@ -547,8 +626,3 @@ def draw_info(image, fps, mode, number):
 
 if __name__ == '__main__':
     main()
-
-# Как делать, Directory:
-# INFO: Created TensorFlow Lite XNNPACK delegate  for CPU.
-    # INFO: TfLiteFlexDelegate delegate: 3 nodes delegated.
-    
